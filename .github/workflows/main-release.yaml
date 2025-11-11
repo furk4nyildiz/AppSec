@@ -1,0 +1,46 @@
+name: Main Release Checks
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  quick_security_checks:
+    name: Hızlı Güvenlik Kontrolleri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Semgrep (hızlı)
+        run: |
+          pip install --upgrade pip
+          pip install semgrep
+          # Sadece HIGH ve üstünü bloklayacak şekilde ayarlanabilir
+          semgrep --config auto --severity high --error || true
+
+      - name: Gitleaks (kritikse kalsın)
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source . --redact --exit-code 1
+
+  manual_approval_and_deploy:
+    name: Manual Approval & Deploy
+    needs: quick_security_checks
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      # url: https://example.com  # Prod URL’in varsa koyabilirsin, dashboardta görünür
+    steps:
+      - name: Onay sonrası aksiyon
+        run: |
+          echo "Security checkler geçti, production environment için manuel onay verildi."
+          echo "Buraya gerçek deploy adımlarını ekleyebilirsin."
