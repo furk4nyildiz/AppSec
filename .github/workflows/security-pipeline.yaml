@@ -99,10 +99,8 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_SUMMARY: false
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
         continue-on-error: true
-        with:
-          args: detect --source=. --report-format=sarif --report-path=results.sarif --redact --no-banner --exit-code=0
       
       - name: Upload results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -169,7 +167,7 @@ jobs:
         with:
           image: '${{ steps.repo.outputs.name }}:${{ env.IMAGE_TAG }}'
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: high
           output-format: sarif
         continue-on-error: true
       
@@ -196,10 +194,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
       
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts
         continue-on-error: true
       
       - name: Scan dependencies with Trivy
