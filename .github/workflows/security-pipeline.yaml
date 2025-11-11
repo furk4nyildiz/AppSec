@@ -2,7 +2,7 @@ name: Application Security Pipeline
 
 on:
   push:
-    branches: [main, master, test, feature*]
+    branches: [main, master, test, feature/*, issue/*]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -99,7 +99,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
         continue-on-error: true
       
       - name: Upload results to GitHub Security
@@ -216,3 +215,31 @@ jobs:
         with:
           sarif_file: trivy-dependency-results.sarif
           category: trivy-dependencies
+
+  # Manual Approval for Deployment
+  manual-approval:
+    name: Manual Approval for Deployment
+    runs-on: ubuntu-latest
+    needs: [sast-codeql, sast-semgrep, secret-scan-gitleaks, container-security, dependency-scan]
+    if: always() && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}
+    
+    steps:
+      - name: Security scans completed
+        run: |
+          echo "All security scans have been completed."
+          echo "Review the results in GitHub Security Dashboard before approving deployment."
+          echo ""
+          echo "Scans performed:"
+          echo "- SAST (CodeQL, Semgrep)"
+          echo "- Secret Scanning (Gitleaks)"
+          echo "- Container Security (Trivy, Grype)"
+          echo "- Dependency Scanning (Trivy)"
+      
+      - name: Deployment approved
+        run: |
+          echo "Deployment approved by: ${{ github.actor }}"
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo "Ready to proceed with deployment."
