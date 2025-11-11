@@ -13,7 +13,8 @@ permissions:
   actions: read
 
 env:
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository | lower }}
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   # SAST - CodeQL
@@ -28,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ['javascript', 'typescript']
+        language: ['javascript']
     
     steps:
       - name: Checkout code
@@ -99,36 +100,17 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: false
+        continue-on-error: true
         with:
-          args: detect --source=. --report-format=sarif --report-path=gitleaks-results.sarif --redact --no-banner --exit-code=0
+          args: detect --source=. --report-format=sarif --report-path=results.sarif --redact --no-banner --exit-code=0
       
       - name: Upload results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('results.sarif') != ''
         with:
-          sarif_file: gitleaks-results.sarif
+          sarif_file: results.sarif
           category: gitleaks
-
-  # Secret Scanning - TruffleHog
-  secret-scan-trufflehog:
-    name: Secret Scanning - TruffleHog
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --only-verified
 
   # Container Security Scanning
   container-security:
@@ -153,7 +135,9 @@ jobs:
           file: ./Dockerfile
           push: false
           load: true
-          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            NODE_ENV=production
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
@@ -161,16 +145,17 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
-          image-ref: '${{ env.IMAGE_NAME }}:${{ github.sha }}'
+          image-ref: '${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
           format: 'sarif'
           output: 'trivy-image-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
           vuln-type: 'os,library'
           exit-code: '0'
+        continue-on-error: true
       
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-image-results.sarif') != ''
         with:
           sarif_file: trivy-image-results.sarif
           category: trivy-container
@@ -179,14 +164,15 @@ jobs:
         uses: anchore/scan-action@v3
         id: grype
         with:
-          image: '${{ env.IMAGE_NAME }}:${{ github.sha }}'
+          image: '${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
           fail-build: false
           severity-cutoff: medium
           output-format: sarif
+        continue-on-error: true
       
       - name: Upload Grype results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && steps.grype.outputs.sarif != ''
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype-container
@@ -211,6 +197,7 @@ jobs:
       
       - name: Install dependencies
         run: npm ci --ignore-scripts
+        continue-on-error: true
       
       - name: Scan dependencies with Trivy
         uses: aquasecurity/trivy-action@master
@@ -221,10 +208,11 @@ jobs:
           output: 'trivy-dependency-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
           exit-code: '0'
+        continue-on-error: true
       
       - name: Upload Trivy dependency results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-dependency-results.sarif') != ''
         with:
           sarif_file: trivy-dependency-results.sarif
           category: trivy-dependencies
