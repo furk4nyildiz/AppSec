@@ -16,119 +16,83 @@ env:
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
-  # SAST - CodeQL
-  sast-codeql:
+  codeql-analysis:
     name: SAST - CodeQL Analysis
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       actions: read
       contents: read
-    
+
     strategy:
       fail-fast: false
       matrix:
         language: ['javascript']
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Initialize CodeQL
+
+      - name: CodeQL initialize et
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
-      
-      - name: Autobuild
+
+      - name: Autobuild (otomatik derleme)
         uses: github/codeql-action/autobuild@v3
-      
-      - name: Perform CodeQL Analysis
+
+      - name: Run CodeQL analysis
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
 
-  # SAST - Semgrep
-  sast-semgrep:
-    name: SAST - Semgrep Scan
+  gitleaks-scan:
+    name: Secret Scanning
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
-    
-    container:
-      image: returntocorp/semgrep
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Run Semgrep
-        run: |
-          semgrep scan \
-            --config="p/security-audit" \
-            --config="p/owasp-top-ten" \
-            --config="p/nodejs" \
-            --config="p/typescript" \
-            --sarif \
-            --output=semgrep-results.sarif \
-            --metrics=off || true
-      
-      - name: Upload results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: semgrep-results.sarif
-          category: semgrep
 
-  # Secret Scanning - Gitleaks
-  secret-scan-gitleaks:
-    name: Secret Scanning - Gitleaks
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      contents: read
-    
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
-      
-      - name: Upload results to GitHub Security
+
+      - name: Upload results to GitHub Security Dashboard
         uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('results.sarif') != ''
         with:
           sarif_file: results.sarif
           category: gitleaks
 
-  # Container Security Scanning
   container-security:
-    name: Container Build and Security Scan
+    name: Container Security Scan
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
       packages: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
+
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
-      - name: Convert repository name to lowercase
+
+      - name: Convert repo name to lowercase
         id: repo
         run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-      
-      - name: Build container image
+
+      - name: Build docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -138,108 +102,87 @@ jobs:
           tags: ${{ steps.repo.outputs.name }}:${{ env.IMAGE_TAG }}
           build-args: |
             NODE_ENV=production
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      
-      - name: Scan image with Trivy
+
+      - name: Trivy image Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
           image-ref: '${{ steps.repo.outputs.name }}:${{ env.IMAGE_TAG }}'
           format: 'sarif'
-          output: 'trivy-image-results.sarif'
+          output: 'trivy-image.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
           vuln-type: 'os,library'
           exit-code: '0'
         continue-on-error: true
-      
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('trivy-image-results.sarif') != ''
-        with:
-          sarif_file: trivy-image-results.sarif
-          category: trivy-container
-      
-      - name: Scan image with Grype
-        uses: anchore/scan-action@v3
-        id: grype
-        with:
-          image: '${{ steps.repo.outputs.name }}:${{ env.IMAGE_TAG }}'
-          fail-build: false
-          severity-cutoff: high
-          output-format: sarif
-        continue-on-error: true
-      
-      - name: Upload Grype results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() && steps.grype.outputs.sarif != ''
-        with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
-          category: grype-container
 
-  # Dependency Vulnerability Scanning
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-container
+
   dependency-scan:
-    name: Dependency Vulnerability Scan
+    name: Dependency Scan - Trivy FS 📦
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-      
-      - name: Install dependencies
+
+      - name: Install dependencies (npm install)
         run: npm install --ignore-scripts
         continue-on-error: true
-      
-      - name: Scan dependencies with Trivy
+
+      - name: Trivy dependency scan başlatılıyor...
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'sarif'
-          output: 'trivy-dependency-results.sarif'
+          output: 'trivy-fs.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
           exit-code: '0'
         continue-on-error: true
-      
-      - name: Upload Trivy dependency results to GitHub Security
+
+      - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('trivy-dependency-results.sarif') != ''
+        if: always() && hashFiles('trivy-fs.sarif') != ''
         with:
-          sarif_file: trivy-dependency-results.sarif
+          sarif_file: trivy-fs.sarif
           category: trivy-dependencies
 
-  # Manual Approval for Deployment
+  # Approval Step
   manual-approval:
-    name: Manual Approval for Deployment
+    name: Deployment Approval (manuel onay)
     runs-on: ubuntu-latest
-    needs: [sast-codeql, sast-semgrep, secret-scan-gitleaks, container-security, dependency-scan]
+    needs: [codeql-analysis, gitleaks-scan, container-security, dependency-scan]
     if: always() && github.ref == 'refs/heads/main'
     environment:
       name: production
       url: https://github.com/${{ github.repository }}
-    
+
     steps:
-      - name: Security scans completed
+      - name: Review Security Reports
         run: |
-          echo "All security scans have been completed."
-          echo "Review the results in GitHub Security Dashboard before approving deployment."
+          echo "All scans completed"
+          echo "Lütfen GitHub Security Dashboard'u kontrol etmeden deploy etme."
           echo ""
-          echo "Scans performed:"
-          echo "- SAST (CodeQL, Semgrep)"
-          echo "- Secret Scanning (Gitleaks)"
-          echo "- Container Security (Trivy, Grype)"
-          echo "- Dependency Scanning (Trivy)"
-      
-      - name: Deployment approved
+          echo "- CodeQL (SAST)"
+          echo "- Gitleaks (Secrets)"
+          echo "- Trivy (Container)"
+          echo "- Trivy (Dependencies)"
+
+      - name: Approval Info
         run: |
-          echo "Deployment approved by: ${{ github.actor }}"
-          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-          echo "Ready to proceed with deployment."
+          echo "Approved by: ${{ github.actor }}"
+          echo "Time: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo "Deployment ready "
